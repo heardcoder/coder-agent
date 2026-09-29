@@ -1,0 +1,10 @@
+{
+  "question": "应该先学习 Rust 还是 Go？",
+  "options": ["Rust", "Go"],
+  "profile": {
+    "background": ["Python", "后端接口"],
+    "prior_ai_project": false,
+    "goal": "demo",
+    "hours_per_week": 8
+  }
+}

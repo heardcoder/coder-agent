@@ -1,0 +1,10 @@
+{
+  "question": "我有 Python 和后端开发经验，准备做 AI 应用。应该先学习 RAG 还是 Agent？",
+  "options": ["RAG", "Agent"],
+  "profile": {
+    "background": ["Python", "后端接口", "已经做过一个笔记问答"],
+    "prior_ai_project": true,
+    "goal": "production",
+    "hours_per_week": 20
+  }
+}
