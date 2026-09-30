@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CoderAgent</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #242424;
+      --muted: #6d675f;
+      --line: #e3ddd4;
+      --paper: #f6f4ef;
+      --card: #fffcf8;
+      --blue: #d0e8f8;
+      --purple: #e0d8f8;
+      --green: #d7f0dc;
+      --red: #9a3b2f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", sans-serif;
+    }
+    main {
+      width: min(760px, calc(100% - 40px));
+      margin: 48px auto 72px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-family: "Songti SC", "Noto Serif SC", serif;
+      font-size: 40px;
+      font-weight: 500;
+      letter-spacing: 0.01em;
+    }
+    .lede {
+      margin: 0 0 28px;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+    textarea {
+      width: 100%;
+      min-height: 140px;
+      padding: 16px 18px;
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--card);
+      color: var(--ink);
+      font: inherit;
+      line-height: 1.6;
+      resize: vertical;
+    }
+    textarea:focus { outline: 2px solid #b9cfe0; border-color: transparent; }
+    .actions {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+      margin: 14px 0 32px;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 18px;
+      font: inherit;
+      cursor: pointer;
+    }
+    button:disabled { cursor: default; opacity: 0.55; }
+    #run {
+      background: var(--ink);
+      color: white;
+    }
+    #sample {
+      background: transparent;
+      color: var(--ink);
+      border: 1px solid var(--line);
+    }
+    ol {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    li {
+      display: grid;
+      grid-template-columns: 18px 1fr;
+      gap: 14px;
+      padding: 14px 0;
+      border-top: 1px solid var(--line);
+    }
+    li:last-child { border-bottom: 1px solid var(--line); }
+    .dot {
+      width: 12px;
+      height: 12px;
+      margin-top: 5px;
+      border: 1.5px solid #b7b1a8;
+      border-radius: 99px;
+      background: transparent;
+    }
+    li.running .dot { background: var(--purple); border-color: #8d7ec4; }
+    li.done .dot { background: var(--green); border-color: #7dae86; }
+    li.stopped .dot { background: #f3d2cc; border-color: var(--red); }
+    li.skipped { color: #a39e96; }
+    .name { font-weight: 600; }
+    .detail {
+      margin: 4px 0 0;
+      color: var(--muted);
+      line-height: 1.55;
+      white-space: pre-wrap;
+    }
+    li.running .detail { color: var(--ink); }
+    #result {
+      display: none;
+      margin-top: 28px;
+      padding: 22px 22px 8px;
+      border-radius: 18px;
+      background: var(--card);
+      border: 1px solid var(--line);
+    }
+    #result.show { display: block; }
+    #result.stop { border-color: #e7c7c1; }
+    #result h2 {
+      margin: 0 0 12px;
+      font-family: "Songti SC", "Noto Serif SC", serif;
+      font-size: 22px;
+      font-weight: 500;
+    }
+    pre {
+      margin: 0;
+      white-space: pre-wrap;
+      font-family: "Songti SC", "PingFang SC", serif;
+      font-size: 15px;
+      line-height: 1.65;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>CoderAgent</h1>
+    <p class="lede">用一段话说明你的问题、在比较的选项，以及背景、目标和每周时间。流程会先拆解，再在研究循环里查资料：先读本地笔记，没有再联网，并把新页面写回笔记。</p>
+    <textarea id="text" placeholder="我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。应该先学习 RAG 还是 Agent？"></textarea>
+    <div class="actions">
+      <button id="run" type="button">开始</button>
+      <button id="sample" type="button">使用示例</button>
+    </div>
+    <ol id="steps">
+      <li data-step="intake"><span class="dot"></span><div><div class="name">拆解输入</div><p class="detail"></p></div></li>
+      <li data-step="research"><span class="dot"></span><div><div class="name">研究</div><p class="detail"></p></div></li>
+    </ol>
+    <section id="result">
+      <h2>结果</h2>
+      <pre id="report"></pre>
+    </section>
+  </main>
+  <script>
+    const sample = "我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。应该先学习 RAG 还是 Agent？";
+    const text = document.querySelector("#text");
+    const runButton = document.querySelector("#run");
+    const result = document.querySelector("#result");
+    const report = document.querySelector("#report");
+
+    document.querySelector("#sample").addEventListener("click", () => {
+      text.value = sample;
+      text.focus();
+    });
+
+    runButton.addEventListener("click", async () => {
+      reset();
+      runButton.disabled = true;
+      try {
+        const response = await fetch("/api/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: text.value })
+        });
+        if (!response.ok || !response.body) {
+          showError("页面没有连上流程。");
+          return;
+        }
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const chunk = await reader.read();
+          if (chunk.done) break;
+          buffer += decoder.decode(chunk.value, { stream: true });
+          const parts = buffer.split("\n\n");
+          buffer = parts.pop() || "";
+          for (const part of parts) {
+            const line = part.split("\n").find((item) => item.startsWith("data: "));
+            if (line) applyEvent(JSON.parse(line.slice(6)));
+          }
+        }
+      } catch (error) {
+        showError("流程中断。");
+      } finally {
+        runButton.disabled = false;
+      }
+    });
+
+    function reset() {
+      for (const item of document.querySelectorAll("#steps li")) {
+        item.className = "";
+        item.querySelector(".detail").textContent = "";
+      }
+      result.className = "";
+      report.textContent = "";
+    }
+
+    function applyEvent(event) {
+      if (event.type === "step") {
+        const item = document.querySelector(`li[data-step="${event.id}"]`);
+        if (!item) return;
+        item.className = event.state;
+        item.querySelector(".detail").textContent = event.text || "";
+        return;
+      }
+      if (event.type === "error") {
+        const running = document.querySelector("li.running");
+        if (running) {
+          running.className = "stopped";
+          running.querySelector(".detail").textContent = event.text || "";
+        }
+        result.className = "show stop";
+        report.textContent = event.text || "";
+        return;
+      }
+      if (event.type === "result") {
+        result.className = event.ok === false ? "show stop" : "show";
+        report.textContent = event.text || "";
+      }
+    }
+
+    function showError(message) {
+      result.className = "show stop";
+      report.textContent = message;
+    }
+  </script>
+</body>
+</html>
