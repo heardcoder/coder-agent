@@ -18,6 +18,8 @@ from coderagent.load import load_corpus, parse_source_text
 from coderagent.models import Evidence, Source
 
 Search = Callable[[str], Optional[tuple]]
+Judge = Callable[[str, str, str], bool]
+_CHROME = ("向TA提问", "向ta提问", "我来答", "百度首页", "下载百度知道", "意见反馈", "违法有害信息", "扫一扫")
 SEARCH_URL = "https://www.bing.com/search"
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -72,7 +74,7 @@ def lookup(
     remembered = _from_knowledge(knowledge, corpus_dir, option, question)
     if remembered is not None:
         return remembered
-    page = search(option, option)
+    page = search(option, option, question.strip())
     if page is None:
         return _empty("知识库没有够近的段落，联网也没有拿到可用正文。")
     title, text, url = _take_page(page)
@@ -90,10 +92,20 @@ def lookup(
     return _empty("联网页面已写入知识库，但没有可引用的原句。")
 
 
-def search_web(query: str, option: str = "") -> tuple[str, str] | None:
-    term = (option or query).strip()
-    _log("--- 联网搜索 ---", f"query: {query}", f"实际检索：{term}")
-    html = _get(SEARCH_URL + "?" + urllib.parse.urlencode({"q": term, "setlang": "zh-Hans"}))
+def search_web(
+    query: str,
+    option: str = "",
+    judge: Optional[Judge] = None,
+    question: str = "",
+) -> tuple[str, str] | None:
+    query = query.strip()
+    option = option.strip()
+    needle = option or query
+    if not needle:
+        return None
+    bing_query = option or query
+    _log("--- 联网搜索 ---", f"query: {bing_query}", f"页面里要出现：{needle}")
+    html = _get(SEARCH_URL + "?" + urllib.parse.urlencode({"q": bing_query, "setlang": "zh-Hans"}))
     if not html:
         _log("搜索页没有返回")
         return None
@@ -108,15 +120,19 @@ def search_web(query: str, option: str = "") -> tuple[str, str] | None:
             _log(f"打开失败：{url}")
             continue
         title, text = _page_text(page)
+        text = _clean_page(text)
         if len(text) < 80:
             _log(f"正文太短：{url}")
             continue
-        if term.casefold() not in text.casefold():
-            _log(f"页面未提到 {term}：{url}")
+        if needle.casefold() not in text.casefold():
+            _log(f"页面未提到 {needle}：{url}")
+            continue
+        if judge is not None and not judge(question.strip() or query or needle, needle, text[:1200]):
+            _log(f"不像在讲这个选项：{url}")
             continue
         kept = text[:4000]
-        _log(f"采用：{title or term}", url, kept)
-        return title or term, kept, url
+        _log(f"采用：{title or needle}", url, kept)
+        return title or needle, kept, url
     _log("没有拿到可用正文")
     return None
 
@@ -213,7 +229,7 @@ def _take_page(page) -> tuple[str, str, str]:
 
 def _write_note(corpus_dir: Path, option: str, title: str, text: str, url: str = "") -> Source | None:
     url = url.replace("\n", "").replace("\r", "").strip()
-    body = re.sub(r"\s+", " ", text).strip()[:4000]
+    body = _clean_page(text)[:4000]
     if option.casefold() not in body.casefold():
         return None
     sentences = _sentences(body, option)
@@ -250,6 +266,19 @@ def _write_note(corpus_dir: Path, option: str, title: str, text: str, url: str =
     path.write_text(raw, encoding="utf-8")
     relative = path.relative_to(corpus_dir.parent).as_posix()
     return parse_source_text(raw, relative)
+
+
+def _clean_page(text: str) -> str:
+    parts = re.split(r"(?<=[。！？.!?])", text)
+    kept = []
+    for part in parts:
+        sentence = part.strip()
+        if not sentence or sentence in {"登录", "注册", "广告"}:
+            continue
+        if any(mark in sentence for mark in _CHROME):
+            continue
+        kept.append(part)
+    return re.sub(r"\s+", " ", "".join(kept)).strip()
 
 
 def _sentences(body: str, option: str) -> list[str]:

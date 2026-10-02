@@ -23,8 +23,16 @@ def complete(
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
     timeout: float = 60,
+    json_mode: bool = True,
 ) -> str:
-    message = complete_message(api_key, messages, model=model, base_url=base_url, timeout=timeout)
+    message = complete_message(
+        api_key,
+        messages,
+        model=model,
+        base_url=base_url,
+        timeout=timeout,
+        json_mode=json_mode,
+    )
     return str(message["content"])
 
 
@@ -36,6 +44,7 @@ def complete_message(
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
     timeout: float = 60,
+    json_mode: bool = True,
 ) -> dict:
     if not api_key or not api_key.strip():
         raise LLMError("调用模型需要 API 密钥。")
@@ -47,7 +56,7 @@ def complete_message(
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
-    else:
+    elif json_mode:
         payload["response_format"] = {"type": "json_object"}
     url = base_url.rstrip("/") + "/chat/completions"
     _print_request(url, payload)

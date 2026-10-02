@@ -137,13 +137,14 @@
 <body>
   <main>
     <h1>CoderAgent</h1>
-    <p class="lede">用一段话说明你的问题、在比较的选项，以及背景、目标和每周时间。流程会先拆解，再在研究循环里查资料：先按原问题查知识库，没有再联网，并把新页面写回笔记。</p>
+    <p class="lede">先判断这句话是选型、书籍还是闲聊。选型会拆成问题、选项和背景；缺了就追问。资料先按原问题查知识库，没有再按原问题联网。</p>
     <textarea id="text" placeholder="我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。知识库检索应该用 BGE-M3，还是 BM25？"></textarea>
     <div class="actions">
       <button id="run" type="button">开始</button>
       <button id="sample" type="button">使用示例</button>
     </div>
     <ol id="steps">
+      <li data-step="route"><span class="dot"></span><div><div class="name">分类</div><p class="detail"></p></div></li>
       <li data-step="intake"><span class="dot"></span><div><div class="name">拆解输入</div><p class="detail"></p></div></li>
       <li data-step="research"><span class="dot"></span><div><div class="name">研究</div><p class="detail"></p></div></li>
     </ol>
@@ -158,6 +159,9 @@
     const runButton = document.querySelector("#run");
     const result = document.querySelector("#result");
     const report = document.querySelector("#report");
+    let asked = "";
+    let base = "";
+    let sent = "";
 
     document.querySelector("#sample").addEventListener("click", () => {
       text.value = sample;
@@ -167,11 +171,13 @@
     runButton.addEventListener("click", async () => {
       reset();
       runButton.disabled = true;
+      const typed = text.value.trim();
+      sent = asked ? base + (typed ? "\n" + typed : "") : typed;
       try {
         const response = await fetch("/api/run", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ text: text.value })
+          body: JSON.stringify({ text: sent, asked, answer: typed })
         });
         if (!response.ok || !response.body) {
           showError("页面没有连上流程。");
@@ -225,7 +231,19 @@
         report.textContent = event.text || "";
         return;
       }
+      if (event.type === "result" && event.ask) {
+        base = sent + (event.carry ? "\n" + event.carry : "");
+        asked = event.step || "";
+        text.value = "";
+        text.placeholder = event.text || "";
+        result.className = "show";
+        report.textContent = event.text || "";
+        return;
+      }
       if (event.type === "result") {
+        asked = "";
+        base = "";
+        text.placeholder = sample;
         result.className = event.ok === false ? "show stop" : "show";
         report.textContent = event.text || "";
       }
