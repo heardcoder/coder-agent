@@ -20,10 +20,11 @@ def run(
     model: str,
     on_step: StepListener | None = None,
     search: Search = search_web,
+    knowledge=None,
 ) -> Result:
     if turn is None:
         raise LLMError(MISSING_KEY)
-    return research(request, corpus_dir, turn, model, search, on_step)
+    return research(request, corpus_dir, turn, model, search, on_step, knowledge)
 
 
 __all__ = ["MISSING_KEY", "NO_MATERIAL", "run"]

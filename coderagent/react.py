@@ -13,7 +13,7 @@ from coderagent.lookup import Search, lookup
 from coderagent.models import GOAL_LABEL, Advice, Evidence, Request, Result, Stop
 
 MAX_ROUNDS = 6
-NO_MATERIAL = "没有读到来源。本地笔记和联网搜索都没有可用资料。"
+NO_MATERIAL = "没有读到来源。知识库和联网搜索都没有可用资料。"
 EXHAUSTED = "研究轮次已用尽，没有交出合格建议。"
 Turn = Callable[[list, Optional[list]], dict]
 StepListener = Callable[[str, str, str], None]
@@ -23,7 +23,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "lookup",
-            "description": "按选项查资料。程序先读本地笔记，没有再联网搜索，并把新页面写回笔记。",
+            "description": "按选项查资料。程序先按用户原问题查知识库，没有再联网搜索，并把新页面写回笔记和知识库。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -58,7 +58,7 @@ SYSTEM = (
     "你在做技术选型。每次只调用一个工具。"
     "先用 lookup 读取资料。query 只写技术名称，不要写「应该」「先学」这类词。"
     "资料足够后再调用 submit_advice。"
-    "建议中的 evidence_id 必须来自 lookup 返回的 evidence，不要编造。"
+    "建议中的每一条都要有 text 和 evidence_id。evidence_id 必须来自 lookup 返回的 evidence，不要编造，也不要用 point 或 reason 代替 text。"
     "理由、暂时不做和下一步都用中文写给这个用户。"
 )
 
@@ -70,6 +70,7 @@ def research(
     model: str,
     search: Search,
     on_step: StepListener | None = None,
+    knowledge=None,
 ) -> Result:
     evidence: dict[str, Evidence] = {}
     rejected: list[str] = []
@@ -101,7 +102,17 @@ def research(
             name, arguments, call_id = _call_parts(call, index)
             if name == "lookup":
                 content = _run_lookup(
-                    arguments, request, corpus_dir, search, evidence, rejected, notes, log, index, cache
+                    arguments,
+                    request,
+                    corpus_dir,
+                    search,
+                    evidence,
+                    rejected,
+                    notes,
+                    log,
+                    index,
+                    cache,
+                    knowledge,
                 )
             elif name == "submit_advice":
                 outcome, content = _run_submit(arguments, request, evidence, rejected, model)
@@ -124,7 +135,9 @@ def research(
     return _result(request, tuple(notes), evidence, Stop(reason), rejected, model)
 
 
-def _run_lookup(arguments, request, corpus_dir, search, evidence, rejected, notes, log, index, cache) -> str:
+def _run_lookup(
+    arguments, request, corpus_dir, search, evidence, rejected, notes, log, index, cache, knowledge=None
+) -> str:
     data = _object(arguments)
     if data is None:
         text = "lookup 的参数不是 JSON 对象。"
@@ -144,7 +157,7 @@ def _run_lookup(arguments, request, corpus_dir, search, evidence, rejected, note
     if key in cache:
         log.append(f"第 {index} 轮：lookup {option}，重复查询，沿用上一次的结果")
         return cache[key]
-    found = lookup(corpus_dir, query, option, search)
+    found = lookup(corpus_dir, query, option, search, knowledge, request.question)
     rejected.extend(found.rejected)
     for note in found.notes:
         if note.id not in {item.id for item in notes}:
@@ -154,6 +167,9 @@ def _run_lookup(arguments, request, corpus_dir, search, evidence, rejected, note
     if found.found and found.origin == "local":
         where = "、".join(note.title for note in found.notes)
         text = f"读到本地笔记：{where}"
+    elif found.found and found.origin == "knowledge":
+        where = "、".join(note.title for note in found.notes)
+        text = f"从知识库读到：{where}"
     elif found.found:
         text = f"本地没有，已联网并写入笔记：{found.notes[0].title}"
     else:
@@ -173,6 +189,7 @@ def _run_submit(arguments, request, evidence, rejected, model):
     payload = {
         "ok": False,
         "reason": outcome.reason,
+        "detail": list(extra),
         "evidence_ids": list(evidence),
     }
     return None, json.dumps(payload, ensure_ascii=False)

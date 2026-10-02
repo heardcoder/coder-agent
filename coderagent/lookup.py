@@ -1,4 +1,4 @@
-"""一个资料工具：先读本地笔记，没有再联网，并把页面写回笔记。"""
+"""一个资料工具：先查知识库，没有再联网，并把页面写回笔记。"""
 
 from __future__ import annotations
 
@@ -52,33 +52,42 @@ class Lookup:
         }
 
 
-def lookup(corpus_dir: Path, query: str, option: str, search: Search) -> Lookup:
+CLOSE_ENOUGH = 0.55
+
+
+def lookup(
+    corpus_dir: Path,
+    query: str,
+    option: str,
+    search: Search,
+    knowledge=None,
+    question: str = "",
+) -> Lookup:
     query = query.strip()
     option = option.strip()
     if not query or not option:
         return _empty("query 和 option 都不能为空。")
     if "," in option or "\n" in option:
         return _empty("option 不能包含逗号或换行。")
-    local = [
-        source
-        for source in load_corpus(corpus_dir)
-        if option.casefold() in {tag.casefold() for tag in source.tags}
-        and option.casefold() in source.body.casefold()
-    ]
-    evidence, rejected = extract(local)
-    if evidence:
-        return Lookup(True, "local", tuple(local), evidence, rejected)
+    remembered = _from_knowledge(knowledge, corpus_dir, option, question)
+    if remembered is not None:
+        return remembered
     page = search(option, option)
     if page is None:
-        return _empty("本地没有笔记，联网也没有拿到可用正文。")
-    title, text = page
-    written = _write_note(corpus_dir, option, title, text)
+        return _empty("知识库没有够近的段落，联网也没有拿到可用正文。")
+    title, text, url = _take_page(page)
+    written = _write_note(corpus_dir, option, title, text, url)
     if written is None:
         return _empty("联网页面里没有可用的原句。")
+    if knowledge is not None:
+        knowledge.add_source(written)
     evidence, rejected = extract((written,))
-    if not evidence:
-        return _empty("联网页面里没有可用的原句。")
-    return Lookup(True, "web", (written,), evidence, rejected)
+    if evidence:
+        return Lookup(True, "web", (written,), evidence, rejected)
+    remembered = _from_knowledge(knowledge, corpus_dir, option, question)
+    if remembered is not None:
+        return remembered
+    return _empty("联网页面已写入知识库，但没有可引用的原句。")
 
 
 def search_web(query: str, option: str = "") -> tuple[str, str] | None:
@@ -107,7 +116,7 @@ def search_web(query: str, option: str = "") -> tuple[str, str] | None:
             continue
         kept = text[:4000]
         _log(f"采用：{title or term}", url, kept)
-        return title or term, kept
+        return title or term, kept, url
     _log("没有拿到可用正文")
     return None
 
@@ -157,11 +166,57 @@ def _get(url: str) -> str | None:
         return None
 
 
-def _write_note(corpus_dir: Path, option: str, title: str, text: str) -> Source | None:
-    body = re.sub(r"\s+", " ", text).strip()[:4000]
-    sentences = _sentences(body, option)
-    if not sentences:
+def _from_knowledge(knowledge, corpus_dir: Path, option: str, question: str = "") -> Lookup | None:
+    """用用户的原问题做向量检索。段落里仍要出现选项名。"""
+    if knowledge is None:
         return None
+    knowledge.index_corpus(corpus_dir)
+    asked = question.strip() or option
+    hits = [
+        hit
+        for hit in knowledge.search(asked, limit=12)
+        if hit.score >= CLOSE_ENOUGH and option.casefold() in hit.text.casefold()
+    ][:4]
+    if not hits:
+        _log(f"知识库没有够近的段落：{option}")
+        return None
+    by_path = {source.path: source for source in load_corpus(corpus_dir)}
+    notes: list[Source] = []
+    evidence: list[Evidence] = []
+    for hit in hits:
+        source = by_path.get(hit.path)
+        if source is None or hit.text not in source.body:
+            continue
+        if source.id not in {note.id for note in notes}:
+            notes.append(source)
+        evidence.append(
+            Evidence(
+                id=f"{source.id}-{hit.start}",
+                source_id=source.id,
+                option=option,
+                dimension="资料原句",
+                stance="info",
+                quote=hit.text,
+            )
+        )
+    if not evidence:
+        return None
+    _log(f"知识库命中：{option}，{len(evidence)} 段")
+    return Lookup(True, "knowledge", tuple(notes), tuple(evidence), ())
+
+
+def _take_page(page) -> tuple[str, str, str]:
+    title, text = page[0], page[1]
+    url = page[2] if len(page) > 2 else ""
+    return title, text, url
+
+
+def _write_note(corpus_dir: Path, option: str, title: str, text: str, url: str = "") -> Source | None:
+    url = url.replace("\n", "").replace("\r", "").strip()
+    body = re.sub(r"\s+", " ", text).strip()[:4000]
+    if option.casefold() not in body.casefold():
+        return None
+    sentences = _sentences(body, option)
     slug = _slug(option)
     note_id = f"web-{slug}"
     title = title.replace("\n", " ").replace("\r", " ").strip() or option
@@ -185,7 +240,8 @@ def _write_note(corpus_dir: Path, option: str, title: str, text: str) -> Source 
         f"id: {note_id}\n"
         f"title: {title}\n"
         f"tags: {option}\n"
-        "---\n\n"
+        + (f"url: {url}\n" if url else "")
+        + "---\n\n"
         f"{body}\n\n"
         + "\n\n".join(blocks)
         + "\n"

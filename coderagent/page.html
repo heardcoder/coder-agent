@@ -137,8 +137,8 @@
 <body>
   <main>
     <h1>CoderAgent</h1>
-    <p class="lede">用一段话说明你的问题、在比较的选项，以及背景、目标和每周时间。流程会先拆解，再在研究循环里查资料：先读本地笔记，没有再联网，并把新页面写回笔记。</p>
-    <textarea id="text" placeholder="我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。应该先学习 RAG 还是 Agent？"></textarea>
+    <p class="lede">用一段话说明你的问题、在比较的选项，以及背景、目标和每周时间。流程会先拆解，再在研究循环里查资料：先按原问题查知识库，没有再联网，并把新页面写回笔记。</p>
+    <textarea id="text" placeholder="我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。知识库检索应该用 BGE-M3，还是 BM25？"></textarea>
     <div class="actions">
       <button id="run" type="button">开始</button>
       <button id="sample" type="button">使用示例</button>
@@ -153,7 +153,7 @@
     </section>
   </main>
   <script>
-    const sample = "我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。应该先学习 RAG 还是 Agent？";
+    const sample = "我有 Python 和后端开发经验，每周大约 8 小时，还没做过 AI 项目，想先做个能演示的应用。知识库检索应该用 BGE-M3，还是 BM25？";
     const text = document.querySelector("#text");
     const runButton = document.querySelector("#run");
     const result = document.querySelector("#result");

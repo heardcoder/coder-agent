@@ -21,8 +21,8 @@ PAGE = Path(__file__).with_name("page.html").read_text(encoding="utf-8")
 HOST = "127.0.0.1"
 
 
-def serve(port: int, corpus_dir: Path, complete: Complete, turn: Turn, model: str) -> None:
-    server = make_server(HOST, port, corpus_dir, complete, turn, model)
+def serve(port: int, corpus_dir: Path, complete: Complete, turn: Turn, model: str, knowledge=None) -> None:
+    server = make_server(HOST, port, corpus_dir, complete, turn, model, knowledge)
     print(f"页面：http://{HOST}:{port}", file=sys.stderr)
     try:
         server.serve_forever()
@@ -37,6 +37,7 @@ def make_server(
     complete: Complete,
     turn: Turn,
     model: str,
+    knowledge=None,
 ) -> ThreadingHTTPServer:
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -87,7 +88,7 @@ def make_server(
             def on_step(step: str, state: str, detail: str) -> None:
                 self._send({"type": "step", "id": step, "state": state, "text": detail})
 
-            result = run(request, corpus_dir, turn=turn, model=model, on_step=on_step)
+            result = run(request, corpus_dir, turn=turn, model=model, on_step=on_step, knowledge=knowledge)
             self._send(
                 {
                     "type": "result",

@@ -11,9 +11,10 @@ from coderagent.models import GOAL_LABEL, Advice, Evidence, Line, Request, Stop
 Complete = Callable[[list[dict[str, str]]], str]
 
 INVALID_JSON = "模型返回的不是可用的建议 JSON。"
-NO_REASONS = "模型没有给出可引用的原因。"
-NO_LATER = "模型没有给出可引用的暂时不做。"
-NO_NEXT = "模型没有给出可引用的下一步。"
+NEED_FIELDS = "每一条都要有 text 和 evidence_id。"
+NO_REASONS = f"模型没有给出可引用的原因。{NEED_FIELDS}"
+NO_LATER = f"模型没有给出可引用的暂时不做。{NEED_FIELDS}"
+NO_NEXT = f"模型没有给出可引用的下一步。{NEED_FIELDS}"
 
 
 def advise_with_model(
@@ -130,15 +131,19 @@ def _one(value: object, by_id: dict[str, Evidence], rejected: list[str], label: 
 
 def _cite(item: object, by_id: dict[str, Evidence], rejected: list[str], label: str):
     if not isinstance(item, dict):
-        rejected.append(f"{label}：不是对象")
+        rejected.append(f"{label}：不是对象。{NEED_FIELDS}")
         return None
-    evidence_id = str(item.get("evidence_id", "")).strip()
+    evidence_id = item.get("evidence_id")
     text = item.get("text")
+    if not isinstance(evidence_id, str) or not evidence_id.strip():
+        rejected.append(f"{label}：缺少 evidence_id。{NEED_FIELDS}")
+        return None
+    evidence_id = evidence_id.strip()
     if not isinstance(text, str) or not text.strip():
-        rejected.append(f"{label}：缺少 text")
+        rejected.append(f"{label}：缺少 text。{NEED_FIELDS}")
         return None
     if evidence_id not in by_id:
-        rejected.append(f"{label}：引用了不存在的证据 {evidence_id}")
+        rejected.append(f"{label}：evidence_id 不存在：{evidence_id}。{NEED_FIELDS}")
         return None
     return evidence_id, text.strip()
 

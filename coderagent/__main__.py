@@ -42,10 +42,11 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         try:
             load_corpus(args.corpus)
-        except InputError as exc:
+            knowledge = _knowledge(args.corpus)
+        except (InputError, ImportError) as exc:
             print(str(exc), file=sys.stderr)
             return 1
-        serve(args.port, args.corpus, intake_complete, turn, args.model)
+        serve(args.port, args.corpus, intake_complete, turn, args.model, knowledge)
         return 0
 
     try:
@@ -56,8 +57,14 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     try:
-        result = run(request, args.corpus, turn=turn if api_key else None, model=args.model)
-    except LLMError as exc:
+        result = run(
+            request,
+            args.corpus,
+            turn=turn if api_key else None,
+            model=args.model,
+            knowledge=_knowledge(args.corpus),
+        )
+    except (LLMError, ImportError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
     sys.stdout.write(render(request, result))
@@ -75,6 +82,13 @@ def _load_input(args, caller) -> Request:
     request = parse_user_text(text, caller)
     print(describe_request(request), file=sys.stderr)
     return request
+
+
+def _knowledge(corpus: Path):
+    from coderagent.embed import BgeM3
+    from coderagent.knowledge import KnowledgeBase
+
+    return KnowledgeBase(corpus.parent / "knowledge.sqlite", BgeM3())
 
 
 def _read_text() -> str:
