@@ -11,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from coderagent.knowledge import Hit
+from coderagent.load import load_corpus
 from coderagent.server import make_server
 
 USER_TEXT = "我有 Python 和后端经验，每周 8 小时，还没做过 AI 项目，想先做个能演示的应用。应该先学 RAG 还是 Agent？"
@@ -28,11 +30,29 @@ INTAKE = {
 
 ADVICE = {
     "recommend": "RAG",
-    "recommend_evidence_id": "rag-start",
-    "reasons": [{"text": "先做输入输出固定的链路。", "evidence_id": "rag-start"}],
-    "not_yet": [{"text": "多 Agent 先不做。", "evidence_id": "agent-later-multi"}],
-    "next_step": {"text": "用笔记做一个带引用的问答。", "evidence_id": "rag-next"},
+    "recommend_evidence_id": "src-rag-0",
+    "reasons": [{"text": "先做输入输出固定的链路。", "evidence_id": "src-rag-0"}],
+    "not_yet": [{"text": "多 Agent 先不做。", "evidence_id": "src-agent-0"}],
+    "next_step": {"text": "用笔记做一个带引用的问答。", "evidence_id": "src-rag-0"},
 }
+
+
+class CorpusHits:
+    def __init__(self, corpus_dir: Path):
+        self.corpus_dir = corpus_dir
+
+    def index_corpus(self, corpus_dir: Path) -> None:
+        self.corpus_dir = corpus_dir
+
+    def search(self, query: str, limit: int = 4) -> list[Hit]:
+        hits = []
+        for source in load_corpus(self.corpus_dir):
+            if source.id not in {"src-rag", "src-agent"}:
+                continue
+            text = source.body.split("\n\n", 1)[0].strip()
+            start = source.body.index(text)
+            hits.append(Hit(source.id, source.path, "", text, start, start + len(text), 0.9))
+        return hits[:limit]
 
 
 def tool(name, arguments, call_id):
@@ -51,9 +71,9 @@ def tool(name, arguments, call_id):
 
 def research_turn(messages, tools):
     blob = json.dumps(messages, ensure_ascii=False)
-    if "rag-start" not in blob:
+    if "src-rag-0" not in blob:
         return tool("lookup", {"query": "RAG", "option": "RAG"}, "rag")
-    if "agent-problem" not in blob:
+    if "src-agent-0" not in blob:
         return tool("lookup", {"query": "Agent", "option": "Agent"}, "agent")
     return tool("submit_advice", ADVICE, "advice")
 
@@ -63,7 +83,15 @@ class ServerTest(unittest.TestCase):
         def complete(messages):
             return json.dumps(INTAKE, ensure_ascii=False)
 
-        server = make_server("127.0.0.1", 0, ROOT / "corpus", complete, research_turn, "deepseek-flash")
+        server = make_server(
+            "127.0.0.1",
+            0,
+            ROOT / "corpus",
+            complete,
+            research_turn,
+            "deepseek-flash",
+            CorpusHits(ROOT / "corpus"),
+        )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_address[1]
@@ -108,7 +136,15 @@ class ServerTest(unittest.TestCase):
                 ensure_ascii=False,
             )
 
-        server = make_server("127.0.0.1", 0, ROOT / "corpus", complete, research_turn, "deepseek-flash")
+        server = make_server(
+            "127.0.0.1",
+            0,
+            ROOT / "corpus",
+            complete,
+            research_turn,
+            "deepseek-flash",
+            CorpusHits(ROOT / "corpus"),
+        )
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         port = server.server_address[1]

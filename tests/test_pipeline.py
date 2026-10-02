@@ -9,28 +9,49 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from coderagent.advise import parse_advice
 from coderagent.extract import extract
+from coderagent.knowledge import Hit
 from coderagent.llm import LLMError
-from coderagent.load import load_request, parse_source_text
-from coderagent.models import Advice, Request, Stop
+from coderagent.load import load_corpus, load_request, parse_source_text
+from coderagent.models import Advice, Evidence, Profile, Request, Stop
 from coderagent.pipeline import NO_MATERIAL, run
 from coderagent.react import EXHAUSTED
 
 RAG_PAYLOAD = {
     "recommend": "RAG",
-    "recommend_evidence_id": "rag-start",
-    "reasons": [{"text": "先做输入输出固定的链路。", "evidence_id": "rag-start"}],
-    "not_yet": [{"text": "多 Agent 先不做。", "evidence_id": "agent-later-multi"}],
-    "next_step": {"text": "用笔记做一个带引用的问答。", "evidence_id": "rag-next"},
+    "recommend_evidence_id": "src-rag-0",
+    "reasons": [{"text": "先做输入输出固定的链路。", "evidence_id": "src-rag-0"}],
+    "not_yet": [{"text": "多 Agent 先不做。", "evidence_id": "src-agent-0"}],
+    "next_step": {"text": "用笔记做一个带引用的问答。", "evidence_id": "src-rag-0"},
 }
 
 AGENT_PAYLOAD = {
     "recommend": "Agent",
-    "recommend_evidence_id": "agent-start",
-    "reasons": [{"text": "下一步学工具调用和状态。", "evidence_id": "agent-start"}],
-    "not_yet": [{"text": "继续补充框架名单解决不了业务分支。", "evidence_id": "agent-later-frameworks"}],
-    "next_step": {"text": "在会分支的那一步决定调用哪个工具。", "evidence_id": "agent-next"},
+    "recommend_evidence_id": "src-agent-0",
+    "reasons": [{"text": "下一步学工具调用和状态。", "evidence_id": "src-agent-0"}],
+    "not_yet": [{"text": "继续补充框架名单解决不了业务分支。", "evidence_id": "src-rag-0"}],
+    "next_step": {"text": "在会分支的那一步决定调用哪个工具。", "evidence_id": "src-agent-0"},
 }
+
+
+class CorpusHits:
+    """测试用知识库：正文里出现检索词就返回一段，不走标签。"""
+
+    def __init__(self, corpus_dir: Path):
+        self.corpus_dir = corpus_dir
+
+    def index_corpus(self, corpus_dir: Path) -> None:
+        self.corpus_dir = corpus_dir
+
+    def search(self, query: str, limit: int = 4) -> list[Hit]:
+        hits = []
+        for source in load_corpus(self.corpus_dir):
+            if source.id not in {"src-rag", "src-agent"}:
+                continue
+            text = source.body.split("\n\n", 1)[0].strip()
+            hits.append(Hit(source.id, source.path, "", text, source.body.index(text), source.body.index(text) + len(text), 0.9))
+        return hits[:limit]
 
 
 def tool(name, arguments, call_id):
@@ -50,9 +71,9 @@ def tool(name, arguments, call_id):
 def studied(payload):
     def turn(messages, tools):
         blob = json.dumps(messages, ensure_ascii=False)
-        if "rag-start" not in blob:
+        if "src-rag-0" not in blob:
             return tool("lookup", {"query": "RAG 是什么", "option": "RAG"}, "rag")
-        if "agent-problem" not in blob:
+        if "src-agent-0" not in blob:
             return tool("lookup", {"query": "Agent 是什么", "option": "Agent"}, "agent")
         return tool("submit_advice", payload, "advice")
 
@@ -77,7 +98,7 @@ class PipelineTest(unittest.TestCase):
         advice = result.outcome
         self.assertEqual(result.model, "deepseek-flash")
         self.assertEqual(advice.recommend.text, "RAG")
-        self.assertEqual(advice.recommend.ref, "model:deepseek-flash:rag-start")
+        self.assertEqual(advice.recommend.ref, "model:deepseek-flash:src-rag-0")
         self.assertEqual(advice.reasons[0].text, "先做输入输出固定的链路。")
         self.assertIn("带引用的问答", advice.next_step.text)
         self.assertTrue(any("多 Agent" in item.text for item in advice.not_yet))
@@ -133,7 +154,7 @@ class PipelineTest(unittest.TestCase):
         self.assertIsInstance(result.outcome, Advice)
         self.assertIn(("research", "done"), [(step, state) for step, state, _ in events])
         done = next(text for step, state, text in events if state == "done")
-        self.assertIn("读到本地笔记", done)
+        self.assertIn("从知识库读到", done)
         self.assertIn("建议先做 RAG", done)
 
     def test_missing_material_does_not_invent_advice(self):
@@ -142,20 +163,21 @@ class PipelineTest(unittest.TestCase):
                 return tool("submit_advice", {"recommend": "Rust"}, "bad")
             return tool("lookup", {"query": "Rust 和 Go", "option": "Rust"}, "rust")
 
+        before = {path.name for path in self.corpus.glob("web-*.md")}
         result = self._run("rust_vs_go.json", turn, search=self._no_page)
         self.assertIsInstance(result.outcome, Stop)
         self.assertEqual(result.outcome.reason, NO_MATERIAL)
         self.assertEqual(self.searches, ["Rust"])
-        self.assertEqual(list(self.corpus.glob("web-*.md")), [])
+        self.assertEqual({path.name for path in self.corpus.glob("web-*.md")}, before)
 
     def test_invalid_advice_can_be_resubmitted(self):
         attempts = {"advice": 0}
 
         def turn(messages, tools):
             blob = json.dumps(messages, ensure_ascii=False)
-            if "rag-start" not in blob:
+            if "src-rag-0" not in blob:
                 return tool("lookup", {"query": "RAG", "option": "RAG"}, "rag")
-            if "agent-problem" not in blob:
+            if "src-agent-0" not in blob:
                 return tool("lookup", {"query": "Agent", "option": "Agent"}, "agent")
             attempts["advice"] += 1
             if attempts["advice"] == 1:
@@ -178,7 +200,7 @@ class PipelineTest(unittest.TestCase):
     def test_unknown_evidence_id_is_rejected_until_the_limit(self):
         def turn(messages, tools):
             blob = json.dumps(messages, ensure_ascii=False)
-            if "rag-start" not in blob:
+            if "src-rag-0" not in blob:
                 return tool("lookup", {"query": "RAG", "option": "RAG"}, "rag")
             return tool(
                 "submit_advice",
@@ -208,7 +230,7 @@ class PipelineTest(unittest.TestCase):
     def test_comparison_covers_every_dimension(self):
         result = self._run("rag_vs_agent.json", studied(RAG_PAYLOAD))
         dimensions = {row.dimension for row in result.comparison}
-        self.assertEqual(dimensions, {"解决的问题", "前置基础", "主路径", "何时更合适"})
+        self.assertEqual(dimensions, {"资料原句"})
         for row in result.comparison:
             for option, lines in row.cells:
                 self.assertTrue(lines, f"{row.dimension} / {option}")
@@ -251,14 +273,43 @@ quote: 这句话没有写进正文。
             model="deepseek-flash",
             on_step=on_step,
             search=search or self._unexpected_search,
+            knowledge=CorpusHits(self.corpus),
         )
 
     def _unexpected_search(self, query, option):
-        raise AssertionError(f"本地已有笔记，不应联网：{query}")
+        raise AssertionError(f"知识库已有资料，不应联网：{query}")
 
     def _no_page(self, query, option):
         self.searches.append(query)
         return None
+
+
+class AdviceFieldTest(unittest.TestCase):
+    def test_rejection_names_text_and_evidence_id(self):
+        request = Request(
+            "先学哪个？",
+            ("RAG", "Agent"),
+            Profile(("Python",), False, "demo", 8),
+        )
+        evidence = (
+            Evidence("rag-start", "rag", "RAG", "资料原句", "info", "先把输入输出固定下来。"),
+        )
+        raw = json.dumps(
+            {
+                "recommend": "RAG",
+                "recommend_evidence_id": "rag-start",
+                "reasons": [{"point": "先做固定链路。", "evidence_id": "rag-start"}],
+                "not_yet": [{"text": "多 Agent 先不做。", "evidence_id": "rag-start"}],
+                "next_step": {"reason": "用笔记做一个问答。"},
+            },
+            ensure_ascii=False,
+        )
+        outcome, rejected = parse_advice(raw, request, evidence, "deepseek-flash")
+        self.assertIsInstance(outcome, Stop)
+        self.assertIn("text", outcome.reason)
+        self.assertIn("evidence_id", outcome.reason)
+        self.assertTrue(any("缺少 text" in item for item in rejected))
+        self.assertTrue(any("缺少 evidence_id" in item for item in rejected))
 
 
 if __name__ == "__main__":

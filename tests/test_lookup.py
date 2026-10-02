@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from coderagent.knowledge import KnowledgeBase
 from coderagent.lookup import _result_links, lookup, search_web
 
 PAGE = (
@@ -33,17 +34,21 @@ class LookupTest(unittest.TestCase):
             calls.append((query, option))
             return PAGE
 
+        def embed(texts):
+            return [[1.0 if "GraphQL" in text else 0.0] for text in texts]
+
         with tempfile.TemporaryDirectory() as tmp:
             corpus = Path(tmp) / "corpus"
             corpus.mkdir()
-            first = lookup(corpus, "GraphQL 是什么", "GraphQL", search)
+            knowledge = KnowledgeBase(Path(tmp) / "knowledge.sqlite", embed)
+            first = lookup(corpus, "GraphQL 是什么", "GraphQL", search, knowledge, "GraphQL 怎么按需取字段")
             self.assertEqual(first.origin, "web")
             self.assertTrue(first.evidence)
             self.assertTrue((corpus / "web-graphql.md").exists())
             for item in first.evidence:
                 self.assertIn(item.quote, (corpus / "web-graphql.md").read_text(encoding="utf-8"))
-            second = lookup(corpus, "GraphQL 入门", "GraphQL", search)
-            self.assertEqual(second.origin, "local")
+            second = lookup(corpus, "GraphQL 入门", "GraphQL", search, knowledge, "GraphQL 入门时怎么取字段")
+            self.assertEqual(second.origin, "knowledge")
             self.assertEqual(calls, [("GraphQL", "GraphQL")])
 
     def test_search_logs_the_page_it_keeps(self):
@@ -75,6 +80,114 @@ class LookupTest(unittest.TestCase):
         self.assertIn("采用：LangGraph 简介", printed)
         self.assertIn("LangGraph 用图来保存每一步的状态。", printed)
         self.assertEqual(found[0], "LangGraph 简介")
+
+    def test_knowledge_hit_skips_web(self):
+        calls = []
+
+        def search(query, option):
+            calls.append((query, option))
+            return PAGE
+
+        def embed(texts):
+            return [[1.0, 0.0] if "LangGraph" in text else [0.0, 1.0] for text in texts]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            corpus = folder / "corpus"
+            corpus.mkdir()
+            (corpus / "graph.md").write_text(
+                "---\n"
+                "id: graph\n"
+                "title: 图流程\n"
+                "tags: 图\n"
+                "---\n\n"
+                "LangGraph 用图来保存每一步的状态，适合把流程画成节点。\n",
+                encoding="utf-8",
+            )
+            base = KnowledgeBase(folder / "knowledge.sqlite", embed)
+            found = lookup(corpus, "LangGraph 是什么", "LangGraph", search, base)
+
+        self.assertEqual(found.origin, "knowledge")
+        self.assertEqual(calls, [])
+        self.assertTrue(found.evidence)
+        self.assertIn("LangGraph", found.evidence[0].quote)
+
+    def test_knowledge_search_uses_the_original_question(self):
+        seen = []
+
+        class Recording:
+            def index_corpus(self, corpus_dir):
+                return None
+
+            def search(self, query, limit=4):
+                seen.append(query)
+                return []
+
+        def search(query, option):
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            corpus = Path(tmp) / "corpus"
+            corpus.mkdir()
+            found = lookup(
+                corpus,
+                "RRF",
+                "RRF",
+                search,
+                Recording(),
+                "两路检索结果应该用 RRF 融合，还是自己把分数加权加起来",
+            )
+
+        self.assertEqual(seen, ["两路检索结果应该用 RRF 融合，还是自己把分数加权加起来"])
+        self.assertFalse(found.found)
+
+    def test_unrelated_knowledge_still_searches_web(self):
+        calls = []
+
+        def search(query, option):
+            calls.append(option)
+            return PAGE
+
+        def embed(texts):
+            return [[1.0, 0.0] if "GraphQL" in text else [0.0, 1.0] for text in texts]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            corpus = folder / "corpus"
+            corpus.mkdir()
+            (corpus / "other.md").write_text(
+                "---\n"
+                "id: other\n"
+                "title: 别的\n"
+                "tags: 其他\n"
+                "---\n\n"
+                "这是一段和选项无关的说明，讲的是别的事情，不能拿来引用。\n",
+                encoding="utf-8",
+            )
+            base = KnowledgeBase(folder / "knowledge.sqlite", embed)
+            found = lookup(corpus, "GraphQL 是什么", "GraphQL", search, base)
+
+        self.assertEqual(calls, ["GraphQL"])
+        self.assertEqual(found.origin, "web")
+
+    def test_long_page_is_indexed_without_short_sentences(self):
+        def search(query, option):
+            return ("RRF 说明", "前面很多字。" + ("RRF 融合" + "甲" * 200))
+
+        def embed(texts):
+            return [[1.0, 0.0] if "RRF" in text else [0.0, 1.0] for text in texts]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            corpus = folder / "corpus"
+            corpus.mkdir()
+            base = KnowledgeBase(folder / "knowledge.sqlite", embed)
+            found = lookup(corpus, "RRF 融合", "RRF 融合", search, base)
+            note = corpus / "web-rrf.md"
+            self.assertTrue(note.exists())
+            self.assertIn("RRF 融合", note.read_text(encoding="utf-8"))
+            self.assertEqual(found.origin, "knowledge")
+            self.assertTrue(found.evidence)
 
 
 if __name__ == "__main__":
