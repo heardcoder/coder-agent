@@ -167,7 +167,7 @@ class PipelineTest(unittest.TestCase):
         result = self._run("rust_vs_go.json", turn, search=self._no_page)
         self.assertIsInstance(result.outcome, Stop)
         self.assertEqual(result.outcome.reason, NO_MATERIAL)
-        self.assertEqual(self.searches, ["Rust"])
+        self.assertEqual(self.searches, [("Rust", "应该先学习 Rust 还是 Go？")])
         self.assertEqual({path.name for path in self.corpus.glob("web-*.md")}, before)
 
     def test_invalid_advice_can_be_resubmitted(self):
@@ -276,11 +276,11 @@ quote: 这句话没有写进正文。
             knowledge=CorpusHits(self.corpus),
         )
 
-    def _unexpected_search(self, query, option):
+    def _unexpected_search(self, query, option, question=""):
         raise AssertionError(f"知识库已有资料，不应联网：{query}")
 
-    def _no_page(self, query, option):
-        self.searches.append(query)
+    def _no_page(self, query, option, question=""):
+        self.searches.append((query, question))
         return None
 
 

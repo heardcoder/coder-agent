@@ -161,8 +161,11 @@ class ServerTest(unittest.TestCase):
             server.shutdown()
             server.server_close()
 
-        self.assertTrue(any(event["type"] == "error" and "每周投入时间" in event["text"] for event in events))
-        self.assertFalse(any(event["type"] == "result" for event in events))
+        asked = next(event for event in events if event["type"] == "result")
+        self.assertTrue(asked["ask"])
+        self.assertEqual(asked["step"], "hours")
+        self.assertIn("每周可投入多少小时", asked["text"])
+        self.assertFalse(any(event["type"] == "error" for event in events))
 
 
 def _request(port: int, method: str, path: str, body: bytes | None = None, headers: dict | None = None):
